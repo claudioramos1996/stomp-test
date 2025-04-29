@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebSocket STOMP Client</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    .container {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .card {
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      padding: 15px;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+    }
+
+    h2 {
+      margin-top: 0;
+      color: #333;
+    }
+
+    button {
+      background-color: #4CAF50;
+      border: none;
+      color: white;
+      padding: 10px 15px;
+      text-align: center;
+      text-decoration: none;
+      display: inline-block;
+      font-size: 14px;
+      margin: 4px 2px;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+
+    button:disabled {
+      background-color: #cccccc;
+      cursor: not-allowed;
+    }
+
+    input, textarea {
+      width: 100%;
+      padding: 8px;
+      margin: 8px 0;
+      box-sizing: border-box;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+
+    #messages {
+      height: 200px;
+      overflow-y: auto;
+      border: 1px solid #ddd;
+      padding: 10px;
+      background-color: #f9f9f9;
+    }
+
+    .message {
+      margin-bottom: 5px;
+      padding: 5px;
+      border-bottom: 1px solid #eee;
+    }
+
+    .topic-subscription {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .status {
+      padding: 5px 10px;
+      border-radius: 3px;
+      font-size: 12px;
+    }
+
+    .connected {
+      background-color: #dff0d8;
+      color: #3c763d;
+    }
+
+    .disconnected {
+      background-color: #f2dede;
+      color: #a94442;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="card">
+    <h2>WebSocket Connection</h2>
+    <div>
+      <label for="server-url">Server URL:</label>
+      <input type="text" id="server-url" value="ws://localhost:9090/ws"/>
+    </div>
+    <div>
+      <button id="connect-btn">Connect</button>
+      <button id="disconnect-btn" disabled>Disconnect</button>
+      <span id="connection-status" class="status disconnected">Disconnected</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Topic Subscription</h2>
+    <div>
+      <div class="topic-subscription">
+        <input type="text" id="topic-name" placeholder="Enter topic name"/>
+        <button id="subscribe-btn" disabled>Subscribe</button>
+      </div>
+      <div id="subscriptions">
+        <h3>Active Subscriptions</h3>
+        <ul id="subscription-list"></ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Send Message</h2>
+    <div>
+      <label for="send-topic">Topic:</label>
+      <input type="text" id="send-topic" placeholder="Enter topic name"/>
+      <label for="message">Message:</label>
+      <textarea id="message" rows="3" placeholder="Enter your message"></textarea>
+      <button id="send-btn" disabled>Send Message</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Message Log</h2>
+    <div id="messages"></div>
+    <button id="clear-btn">Clear Messages</button>
+  </div>
+</div>
+
+<script>
+  // WebSocket and STOMP client variables
+  let stompClient = null;
+  let subscriptions = {};
+
+  // DOM elements
+  const connectBtn = document.getElementById('connect-btn');
+  const disconnectBtn = document.getElementById('disconnect-btn');
+  const subscribeBtn = document.getElementById('subscribe-btn');
+  const sendBtn = document.getElementById('send-btn');
+  const clearBtn = document.getElementById('clear-btn');
+  const connectionStatus = document.getElementById('connection-status');
+  const serverUrl = document.getElementById('server-url');
+  const topicName = document.getElementById('topic-name');
+  const sendTopic = document.getElementById('send-topic');
+  const messageInput = document.getElementById('message');
+  const messagesDiv = document.getElementById('messages');
+  const subscriptionList = document.getElementById('subscription-list');
+
+  // Connect to WebSocket server
+  connectBtn.addEventListener('click', function () {
+    logMessage('Attempting to connect to WebSocket server...');
+    logMessage('Server URL: ' + serverUrl.value);
+
+    const socket = new WebSocket(serverUrl.value);
+    stompClient = Stomp.over(socket);
+
+    // Enhanced debug logging
+    stompClient.debug = function(str) {
+      logMessage('STOMP Debug: ' + str);
+      console.log('STOMP Debug: ' + str);
+    };
+
+    // Log WebSocket events
+    socket.onopen = function() {
+      logMessage('WebSocket connection established');
+    };
+
+    socket.onclose = function() {
+      logMessage('WebSocket connection closed');
+    };
+
+    socket.onerror = function(error) {
+      logMessage('WebSocket error: ' + error);
+    };
+
+    //  Heartbeat configuration with logging
+    stompClient.heartbeat.outgoing = 1000 * 60; // sends heartbeat every 1s
+    stompClient.heartbeat.incoming = 1000 * 90; // expects server heartbeat up to 90s
+    stompClient.reconnect_delay = 5000; // tries to reconnect every 5 seconds
+    logMessage('Heartbeat configured - Outgoing: 60s, Incoming: 90s, Reconnect delay: 5s');
+
+    stompClient.connect({}, function (frame) {
+      logMessage('STOMP connection established');
+      logMessage('Connection frame: ' + JSON.stringify(frame));
+      updateConnectionStatus(true);
+
+      // Enable buttons
+      disconnectBtn.disabled = false;
+      subscribeBtn.disabled = false;
+      sendBtn.disabled = false;
+      connectBtn.disabled = true;
+    }, function (error) {
+      logMessage('STOMP connection error: ' + error);
+      logMessage('Error details: ' + JSON.stringify(error));
+      updateConnectionStatus(false);
+    });
+  });
+
+  // Disconnect from WebSocket server
+  disconnectBtn.addEventListener('click', function () {
+    if (stompClient !== null) {
+      stompClient.disconnect();
+      stompClient = null;
+
+      // Clear subscriptions
+      subscriptions = {};
+      subscriptionList.innerHTML = '';
+
+      updateConnectionStatus(false);
+      logMessage('Disconnected');
+
+      // Disable buttons
+      disconnectBtn.disabled = true;
+      subscribeBtn.disabled = true;
+      sendBtn.disabled = true;
+      connectBtn.disabled = false;
+    }
+  });
+
+  // Subscribe to a topic
+  subscribeBtn.addEventListener('click', function () {
+    const topic = topicName.value.trim();
+    if (!topic) {
+      logMessage('Please enter a topic name');
+      return;
+    }
+
+    if (subscriptions[topic]) {
+      logMessage(`Already subscribed to ${topic}`);
+      return;
+    }
+
+    const destination = topic;
+    const subscription = stompClient.subscribe(destination, function (message) {
+      logMessage(`Received on ${topic}: ${message.body}`);
+    });
+
+    subscriptions[topic] = subscription;
+    addSubscriptionToList(topic);
+    logMessage(`Subscribed to ${topic}`);
+    topicName.value = '';
+  });
+
+  // Send a message
+  sendBtn.addEventListener('click', function () {
+    const topic = sendTopic.value.trim();
+    const message = messageInput.value.trim();
+
+    if (!topic || !message) {
+      logMessage('Please enter both topic and message');
+      return;
+    }
+
+    stompClient.send(topic, {}, message);
+    logMessage(`Sent to ${topic}: ${message}`);
+  });
+
+  // Clear messages
+  clearBtn.addEventListener('click', function () {
+    messagesDiv.innerHTML = '';
+  });
+
+  // Helper functions
+  function updateConnectionStatus(connected) {
+    if (connected) {
+      connectionStatus.textContent = 'Connected';
+      connectionStatus.className = 'status connected';
+    } else {
+      connectionStatus.textContent = 'Disconnected';
+      connectionStatus.className = 'status disconnected';
+    }
+  }
+
+  function logMessage(message) {
+    const messageElement = document.createElement('div');
+    messageElement.className = 'message';
+    messageElement.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+    messagesDiv.appendChild(messageElement);
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+  }
+
+  function addSubscriptionToList(topic) {
+    const li = document.createElement('li');
+    li.textContent = topic + ' ';
+
+    const unsubBtn = document.createElement('button');
+    unsubBtn.textContent = 'Unsubscribe';
+    unsubBtn.style.fontSize = '12px';
+    unsubBtn.style.padding = '3px 6px';
+
+    unsubBtn.addEventListener('click', function () {
+      if (subscriptions[topic]) {
+        subscriptions[topic].unsubscribe();
+        delete subscriptions[topic];
+        li.remove();
+        logMessage(`Unsubscribed from ${topic}`);
+      }
+    });
+
+    li.appendChild(unsubBtn);
+    subscriptionList.appendChild(li);
+  }
+</script>
+</body>
+</html>
